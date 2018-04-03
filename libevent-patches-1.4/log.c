@@ -37,7 +37,7 @@
  * SUCH DAMAGE.
  */
 
-// log.h和log.c：log日志函数
+// log.h和log.c：log日志函数sssss
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

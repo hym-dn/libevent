@@ -32,7 +32,7 @@
  *	@(#)time.h	8.2 (Berkeley) 7/10/94
  */
 
-// compat/sys下的两个源文件：_libevent_time.h：一些用于时间操作的结构体定义、函数和宏定义；
+ss_libevent_time.h：一些用于时间操作的结构体定义、函数和宏定义；
 
 #ifndef _SYS_TIME_H_
 #define _SYS_TIME_H_

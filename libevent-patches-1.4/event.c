@@ -181,18 +181,24 @@ event_init(void)
 	return (base);
 }
 
+// 该函数对新生成的libevent实例进行了初始化。该函数首先为event_base实例申
+// 请空间，然后初始化timer mini-heap，选择并初始化合适的系统I/O 的demult
+// iplexer机制，初始化各事件链表；函数还检测了系统的时间设置，为后面的时间管
+// 理打下基础。
 struct event_base *
 event_base_new(void)
 {
 	int i;
 	struct event_base *base;
-
+	
+	// 分配内存空间
 	if ((base = calloc(1, sizeof(struct event_base))) == NULL)
 		event_err(1, "%s: calloc", __func__);
-
+	
 	event_sigcb = NULL;
 	event_gotsig = 0;
 
+	
 	detect_monotonic();
 	gettime(base, &base->event_tv);
 	
@@ -651,7 +657,10 @@ event_base_once(struct event_base *base, int fd, short events,
 
 /**
  * 要向libevent添加一个事件，需要首先设置event对象，这通过调用libevent提供的函数有：
- * event_set(), event_base_set(), event_priority_set()来完成；下面分别进行讲解。
+ * event_set(),ev_resevent_base_set(),event_priority_set()来完成；下面分别进行讲解。
+ */
+
+/** 
  * 1.设置事件ev绑定的文件描述符或者信号，对于定时事件，设为-1即可；
  * 2.设置事件类型，比如EV_READ|EV_PERSIST, EV_WRITE, EV_SIGNAL等；
  * 3.设置事件的回调函数以及参数arg；
@@ -668,20 +677,28 @@ event_set(struct event *ev, int fd, short events,
 {
 
 	/* Take the current base - caller needs to set the real base later */
+	// 初始化所属反应堆
 	ev->ev_base = current_base;
 
+	// 设置回调函数
 	ev->ev_callback = callback; // 设置回调函数
+	// 设置参数
 	ev->ev_arg = arg; // 参数
+	// 设置文件描述符或信号
 	ev->ev_fd = fd; // 文件描述符或信号
+	// 设置事件
 	ev->ev_events = events; // 事件类型
+	// ???
 	ev->ev_res = 0; // 回调函数返回值
+	// 设置当前事件状态
 	ev->ev_flags = EVLIST_INIT; // 设置事件状态为“已初始化”
+	// 设置事件触发时回调函数调用次数
 	ev->ev_ncalls = 0; // 执行时回调函数调用次数
 	ev->ev_pncalls = NULL;
-
+	
 	// 初始化组最小堆
 	min_heap_elem_init(ev);
-
+	
 	/* by default, we put new events into the middle priority */
 	// 设置事件优先级
 	if(current_base)
@@ -791,13 +808,12 @@ event_pending(struct event *ev, short event, struct timeval *tv)
 int
 event_add(struct event *ev, const struct timeval *tv)
 {
+
 	// 要注册到的event_base
 	struct event_base *base = ev->ev_base;
-
-	// I/O多路复用控制
+	
+	// base使用的系统I/O策略
 	const struct eventop *evsel = base->evsel;
-
-    // base使用的系统I/O策略
 	void *evbase = base->evbase;
 	
 	int res = 0;
@@ -809,39 +825,44 @@ event_add(struct event *ev, const struct timeval *tv)
 		 ev->ev_events & EV_WRITE ? "EV_WRITE " : " ",
 		 tv ? "EV_TIMEOUT " : " ",
 		 ev->ev_callback));
-
+		 
+	// 标志中存在其他异常状态
 	assert(!(ev->ev_flags & ~EVLIST_ALL));
-
+	
+	//
     // 新的timer事件，调用timer heap接口在堆上预留一个位置
     // 注：这样能保证该操作的原子性：
     // 向系统I/O机制注册可能会失败，而当在堆上预留成功后，
     // 定时事件的添加将肯定不会失败；
     // 而预留位置的可能结果是堆扩充，但是内部元素并不会改变
+	// 
 	/*
 	 * prepare for timeout insertion further below, if we get a
 	 * failure on any step, we should not change any state.
 	 */
+	// 如果时间信息存在，并且事件状态处于非激活状态
 	if (tv != NULL && !(ev->ev_flags & EVLIST_TIMEOUT)) {
+		// 在堆上预留一个位置
 		if (min_heap_reserve(&base->timeheap,
-			1 + min_heap_size(&base->timeheap)) == -1) // 在堆上预留一个位置
+			1 + min_heap_size(&base->timeheap)) == -1)
 			return (-1);  /* ENOMEM == errno */
 	}
-
+	
+	// 如果事件ev期望追踪读、写以及信号事件
 	// 如果事件ev不在已注册或者激活链表中，则调用evbase注册事件
 	if ((ev->ev_events & (EV_READ|EV_WRITE|EV_SIGNAL)) &&
 	    !(ev->ev_flags & (EVLIST_INSERTED|EVLIST_ACTIVE))) {
 		res = evsel->add(evbase, ev); // 增加一套I/O多路复用机制
 		if (res != -1) // 注册成功，插入event到已注册链表中
-			event_queue_insert(base, ev, EVLIST_INSERTED);
+			event_queue_insert(base, ev, EVLIST_INSERTED); // 插入已注册链表中
 	}
 
 	/* 
 	 * we should change the timout state only if the previous event
 	 * addition succeeded.
 	 */
-	// 准备添加定时事件
+	// 准备添加定时器事件
 	if (res != -1 && tv != NULL) {
-
 		
 		struct timeval now;
 
@@ -851,14 +872,15 @@ event_add(struct event *ev, const struct timeval *tv)
 		 */
 		// EVLIST_TIMEOUT表明event已经在定时器堆中了，删除旧的
 		if (ev->ev_flags & EVLIST_TIMEOUT)
-			event_queue_remove(base, ev, EVLIST_TIMEOUT);
+			event_queue_remove(base, ev, EVLIST_TIMEOUT); // 删除旧的
 
 		/* Check if it is active due to a timeout.  Rescheduling
 		 * this timeout before the callback can be executed
 		 * removes it from the active list. */
-		// 如果事件已经是就绪状态则从激活链表中删除
-		if ((ev->ev_flags & EVLIST_ACTIVE) &&
-		    (ev->ev_res & EV_TIMEOUT)) {
+		// 如果事件已经是就绪状态
+		// 并且当前事件由于超时激活
+		if ((ev->ev_flags & EVLIST_ACTIVE)&&
+			(ev->ev_res & EV_TIMEOUT)) {
 			/* See if we are just active executing this
 			 * event in a loop
 			 */
@@ -867,24 +889,28 @@ event_add(struct event *ev, const struct timeval *tv)
 				/* Abort loop */
 				*ev->ev_pncalls = 0;
 			}
-			
+			// 从链表中移除
 			event_queue_remove(base, ev, EVLIST_ACTIVE);
 		}
-
+		
 		// 计算时间，并插入到timer小根堆中
 		gettime(base, &now);
 		evutil_timeradd(&now, tv, &ev->ev_timeout);
-
+		
 		event_debug((
 			 "event_add: timeout in %ld seconds, call %p",
 			 tv->tv_sec, ev->ev_callback));
 
-		event_queue_insert(base, ev, EVLIST_TIMEOUT);
-	}
-
+		// 将事件插入到timer小根堆中
+		event_queue_insert(base, ev, EVLIST_TIMEOUT)
+		
 	return (res);
 }
 
+// 函数将删除事件ev，对于I/O事件，从I/O 的demultiplexer上将事件注销；
+// 对于Signal事件，将从Signal事件链表中删除；对于定时事件，将从堆上删除；
+// 同样删除事件的操作则不一定是原子的，比如删除时间事件之后，有可能从系统
+// I/O机制中注销会失败。
 int
 event_del(struct event *ev)
 {
@@ -896,9 +922,11 @@ event_del(struct event *ev)
 		 ev, ev->ev_callback));
 
 	/* An event without a base has not been added */
+	// ev_base为NULL，表明ev没有被注册
 	if (ev->ev_base == NULL)
 		return (-1);
 
+	// 取得ev注册的event_base和eventop指针
 	base = ev->ev_base;
 	evsel = base->evsel;
 	evbase = base->evbase;
@@ -906,19 +934,21 @@ event_del(struct event *ev)
 	assert(!(ev->ev_flags & ~EVLIST_ALL));
 
 	/* See if we are just active executing this event in a loop */
+	// 将ev_callback调用次数设置为0
 	if (ev->ev_ncalls && ev->ev_pncalls) {
 		/* Abort loop */
 		*ev->ev_pncalls = 0;
 	}
 
+	// 从对应的链表中删除
 	if (ev->ev_flags & EVLIST_TIMEOUT)
 		event_queue_remove(base, ev, EVLIST_TIMEOUT);
-
 	if (ev->ev_flags & EVLIST_ACTIVE)
 		event_queue_remove(base, ev, EVLIST_ACTIVE);
-
 	if (ev->ev_flags & EVLIST_INSERTED) {
 		event_queue_remove(base, ev, EVLIST_INSERTED);
+		// EVLIST_INSERTED表明是I/O或者Signal事件，
+        // 需要调用I/O demultiplexer注销事件
 		return (evsel->del(evbase, ev));
 	}
 
@@ -1035,64 +1065,99 @@ timeout_process(struct event_base *base)
 	}
 }
 
+// 函数将删除事件ev，对于I/O事件，从I/O 的demultiplexer上将事件注销；
+// 对于Signal事件，将从Signal事件链表中删除；对于定时事件，将从堆上删除；
+// 同样删除事件的操作则不一定是原子的，比如删除时间事件之后，有可能从系统
+// I/O机制中注销会失败。
 void
 event_queue_remove(struct event_base *base, struct event *ev, int queue)
 {
+	// 如果当前事件状态不存在
 	if (!(ev->ev_flags & queue))
 		event_errx(1, "%s: %p(fd %d) not on queue %x", __func__,
-			   ev, ev->ev_fd, queue);
+			   ev, ev->ev_fd, queue); // 输出错误
 
+	// 如果当前事件不是内部事件
 	if (~ev->ev_flags & EVLIST_INTERNAL)
-		base->event_count--;
+		base->event_count--; // 事件计数递减
 
+	// 取消事件标记
 	ev->ev_flags &= ~queue;
+
+	// 检测事件类型
 	switch (queue) {
+	// 已注册事件
 	case EVLIST_INSERTED:
+		// 从事件队列中删除
 		TAILQ_REMOVE(&base->eventqueue, ev, ev_next);
+		// 跳出
 		break;
+	// 激活事件
 	case EVLIST_ACTIVE:
+		// 激活事件递减
 		base->event_count_active--;
+		// 删除激活事件
 		TAILQ_REMOVE(base->activequeues[ev->ev_pri],
 		    ev, ev_active_next);
+		// 跳出
 		break;
+	// 超时事件
 	case EVLIST_TIMEOUT:
+		// 从最小堆中删除
 		min_heap_erase(&base->timeheap, ev);
+		// 跳出
 		break;
+	// 默认
 	default:
+		// 错误输出
 		event_errx(1, "%s: unknown queue %x", __func__, queue);
 	}
 }
 
+// 负责将事件插入到对应的链表中
 void
 event_queue_insert(struct event_base *base, struct event *ev, int queue)
 {
+	// 如果事件已经在相应的链表中
 	if (ev->ev_flags & queue) {
 		/* Double insertion is possible for active events */
+		// 如果是激活链表则直接返回
 		if (queue & EVLIST_ACTIVE)
 			return;
-
+        // 输出警报
 		event_errx(1, "%s: %p(fd %d) already on queue %x", __func__,
 			   ev, ev->ev_fd, queue);
 	}
 
+	// 如果事件并非是内部使用的
 	if (~ev->ev_flags & EVLIST_INTERNAL)
-		base->event_count++;
-
+		base->event_count++; // 增加事件计数
+		
+	// 记录queue标记
 	ev->ev_flags |= queue;
+
 	switch (queue) {
-	case EVLIST_INSERTED:
+	// 已注册事件，加入到已注册事件链表
+	case EVLIST_INSERTED: 
 		TAILQ_INSERT_TAIL(&base->eventqueue, ev, ev_next);
 		break;
+	// 激活事件，加入激活链表
 	case EVLIST_ACTIVE:
+		// 自增激活事件计数
 		base->event_count_active++;
+		// 插入到链表尾端
 		TAILQ_INSERT_TAIL(base->activequeues[ev->ev_pri],
 		    ev,ev_active_next);
 		break;
-	case EVLIST_TIMEOUT: {
+	// 超时事件，加入到最小堆
+	case EVLIST_TIMEOUT: { // 定时事件，加入堆
+		// 插入到最小堆
 		min_heap_push(&base->timeheap, ev);
 		break;
 	}
+	// 其他
 	default:
+		// 输出
 		event_errx(1, "%s: unknown queue %x", __func__, queue);
 	}
 }

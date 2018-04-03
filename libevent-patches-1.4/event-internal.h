@@ -45,14 +45,18 @@ extern "C" {
 // eventop的5个函数指针指向这5个函数，那么程序就可以使用epoll作为I/O 
 // demultiplex机制了，这个在后面会再次提到。
 struct eventop {
+
 	const char *name;
+
 	void *(*init)(struct event_base *); // 初始化
 	int (*add)(void *, struct event *); // 注册事件
 	int (*del)(void *, struct event *); // 删除事件
 	int (*dispatch)(struct event_base *, void *, struct timeval *); // 事件分发
 	void (*dealloc)(struct event_base *, void *); // 注销，释放资源
+
 	/* set if we need to reinitialize the event base */
 	int need_reinit;
+	
 };
 
 // 回想Reactor模式的几个基本组件，本节讲解的部分对应于Reactor框架组件。
@@ -69,6 +73,7 @@ struct event_base {
 	// ex机制统一封装成了eventop结构；因此eventops[]包含了select、
 	// poll、kequeue和epoll等等其中的若干个全局实例对象。evbase实际
 	// 上是一个eventop实例对象；
+	// 这个很诡异，不太明白？？？evsel与evbase是否相同？？？
 	const struct eventop *evsel;
 	void *evbase;
 
@@ -81,30 +86,30 @@ struct event_base {
     // 中断循环
 	int event_gotterm;		/* Set to terminate loop */
 	int event_break;		/* Set to terminate loop immediately */
-	
+
 	// activequeues是一个二级指针，前面讲过libevent支持事件优先级，因此你
 	// 可以把它看作是数组，其中的元素activequeues[priority]是一个链表，链
 	// 表的每个节点指向一个优先级为priority的就绪事件event。
 	/* active event management */
-	struct event_list **activequeues;
-	int nactivequeues; // 数量 ???
+	struct event_list **activequeues; // 二级指针，指向优先级为priority的链表
+	int nactivequeues; // 优先级二级链表的元素数量
 
 	// sig是由来管理信号的结构体，将在后面信号处理时专门讲解；
 	/* signal handling info */
 	struct evsignal_info sig;
-	
+
 	// eventqueue，链表，保存了所有的注册事件event的指针。
 	struct event_list eventqueue;
-	
+
 	// event_tv和tv_cache是libevent用于时间管理的变量，将在后面讲到；
 	struct timeval event_tv;
-	
+
 	// timeheap是管理定时事件的小根堆，将在后面定时事件处理时专门讲解；
 	struct min_heap timeheap;
 
     // event_tv和tv_cache是libevent用于时间管理的变量，将在后面讲到；
 	struct timeval tv_cache;
-	
+
 };
 
 /* Internal use only: Functions that might be missing from <sys/queue.h> */

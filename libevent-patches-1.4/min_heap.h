@@ -33,10 +33,13 @@
 #include "event.h"
 #include "evutil.h"
 
+/**
+ * 最小堆结构体
+ */
 typedef struct min_heap
 {
-    struct event** p;
-    unsigned n, a;
+    struct event** p; // 指向事件数组
+    unsigned n, a; // n表示目前保存了多少个元素，a表示p指向的内存的尺寸。
 } min_heap_t;
 
 static inline void           min_heap_ctor(min_heap_t* s);
