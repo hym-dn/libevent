@@ -126,38 +126,47 @@ static int	timeout_next(struct event_base *, struct timeval **);
 static void	timeout_process(struct event_base *);
 static void	timeout_correct(struct event_base *, struct timeval *);
 
+// 检测是否支持monotonic时间
 static void
 detect_monotonic(void)
 {
 #if defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
 	struct timespec	ts;
 
+	// 如果支持monotonic时间
 	if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
-		use_monotonic = 1;
+		use_monotonic = 1; // 设置相应标志
 #endif
 }
 
+// base中的tv_cache用来记录时间缓存，主要是为了防止频繁的调用系统函数
+// 来获取时间，而获取时间的调用为gettime。
 static int
 gettime(struct event_base *base, struct timeval *tp)
 {
+	// 如果缓冲时间的秒非0,则直接返回缓冲时间
 	if (base->tv_cache.tv_sec) {
 		*tp = base->tv_cache;
 		return (0);
 	}
 
 #if defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
+	// 如果支持monotonic时间
 	if (use_monotonic) {
 		struct timespec	ts;
 
+		// 获取monotonic时间，如果获取失败
 		if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1)
 			return (-1);
-
+		// 返回获取的monotonic时间
 		tp->tv_sec = ts.tv_sec;
 		tp->tv_usec = ts.tv_nsec / 1000;
 		return (0);
 	}
 #endif
 
+	// 返回获取的时间
+	// evutil_gettimeofday 内部直接调用 gettimeofday函数
 	return (evutil_gettimeofday(tp, NULL));
 }
 
@@ -373,6 +382,7 @@ event_base_priority_init(struct event_base *base, int npriorities)
 	return (0);
 }
 
+// 判断当前反应堆中是否存在事件
 int
 event_haveevents(struct event_base *base)
 {
@@ -493,33 +503,46 @@ event_loop(int flags)
 	return event_base_loop(current_base, flags);
 }
 
+
+// Libevent的事件主循环主要是通过event_base_loop ()函数完成的
 int
 event_base_loop(struct event_base *base, int flags)
 {
+	// I\O复用策略
 	const struct eventop *evsel = base->evsel;
 	void *evbase = base->evbase;
+	
 	struct timeval tv;
 	struct timeval *tv_p;
 	int res, done;
-
+	
 	/* clear time cache */
+	// 清空时间缓存
 	base->tv_cache.tv_sec = 0;
 
+	// 设置事件所属反应堆
 	if (base->sig.ev_signal_added)
-		evsignal_base = base;
+		evsignal_base = base; // evsignal_base是全局变量，在处理signal时，用于指名signal所属的event_base实例
+
+	// 进入事件循环
 	done = 0;
 	while (!done) {
+		
 		/* Terminate the loop if we have been asked to */
+		/**
+		 * 查看是否需要跳出循环，程序可以调用event_loopexit_cb()设置
+		 * event_gotterm标记调用event_base_loopbreak()设置event
+		 * _break标记
+		 */
 		if (base->event_gotterm) {
 			base->event_gotterm = 0;
 			break;
 		}
-
 		if (base->event_break) {
 			base->event_break = 0;
 			break;
 		}
-
+		
 		/* You cannot use this interface for multi-threaded apps */
 		while (event_gotsig) {
 			event_gotsig = 0;
@@ -532,48 +555,66 @@ event_base_loop(struct event_base *base, int flags)
 			}
 		}
 
+		// 校正系统时间
+	    // 校正系统时间，如果系统使用的是非MONOTONIC时间，用户可能会向后调整了系统时间
+		// 在timeout_correct函数里，比较last wait time和当前时间，如果当前时间< 
+		// last wait time 表明时间有问题，这是需要更新timer_heap中所有定时事件的超
+		// 时时间。
+		// 纠正时间系统
 		timeout_correct(base, &tv);
 
+		// 根据timer heap中事件的最小超时时间，计算系统I/O demultiplexer的最大等待时间
 		tv_p = &tv;
-		if (!base->event_count_active && !(flags & EVLOOP_NONBLOCK)) {
-			timeout_next(base, &tv_p);
-		} else {
+		if (!base->event_count_active && !(flags & EVLOOP_NONBLOCK)) { // 不存在激活事件，并且并未阻塞循环
+			timeout_next(base, &tv_p); // 获取当前最小时间堆中，待触发的最小时间
+		} else { // 存在激活事件
 			/* 
 			 * if we have active events, we just poll new events
 			 * without waiting.
 			 */
+			 // 依然有未处理的就绪时间，就让I/O demultiplexer立即返回，不必等待
+			 // 下面会提到，在libevent中，低优先级的就绪事件可能不能立即被处理
 			evutil_timerclear(&tv);
 		}
 		
 		/* If we have no events, we just exit */
+		// 如果当前没有注册事件，就退出
 		if (!event_haveevents(base)) {
 			event_debug(("%s: no events registered.", __func__));
 			return (1);
 		}
 
 		/* update last old time */
+		// 获取当前时间，并存储到event_tv中
 		gettime(base, &base->event_tv);
 
 		/* clear time cache */
+		// 清空缓存时间
 		base->tv_cache.tv_sec = 0;
-
+		// 调用系统I/O demultiplexer等待就绪I/O events，可能是epoll_wait，或者select等；
+		// 在evsel->dispatch()中，会把就绪signal event、I/O event插入到激活链表中
 		res = evsel->dispatch(base, evbase, tv_p);
-
 		if (res == -1)
 			return (-1);
+
+		// 将time cache赋值为当前系统时间
 		gettime(base, &base->tv_cache);
-
+		// 检查heap中的timer events，将就绪的timer event从heap上删除，并插入到激活链表中
 		timeout_process(base);
-
-		if (base->event_count_active) {
-			event_process_active(base);
-			if (!base->event_count_active && (flags & EVLOOP_ONCE))
-				done = 1;
-		} else if (flags & EVLOOP_NONBLOCK)
-			done = 1;
+        // 调用event_process_active()处理激活链表中的就绪event，调用其回
+		// 调函数执行事件处理该函数会寻找最高优先级（priority值越小优先级越高）
+		// 的激活事件链表，然后处理链表中的所有就绪事件；因此低优先级的就绪事件
+		// 可能得不到及时处理；
+		if (base->event_count_active) { // 如果存在激活事件
+			event_process_active(base); // 处理激活事件
+			if (!base->event_count_active && (flags & EVLOOP_ONCE)) // 不存在激活事件，并且只循环一次
+				done = 1; // 设置标志
+		} else if (flags & EVLOOP_NONBLOCK) // 循环不阻塞
+			done = 1;  // 设置标志
 	}
 
 	/* clear time cache */
+	// 循环结束，清空时间缓存
 	base->tv_cache.tv_sec = 0;
 
 	event_debug(("%s: asked to terminate loop.", __func__));
@@ -970,6 +1011,7 @@ event_active(struct event *ev, int res, short ncalls)
 	event_queue_insert(ev->ev_base, ev, EVLIST_ACTIVE);
 }
 
+// 获取最小时间堆中，等待的最小时间
 static int
 timeout_next(struct event_base *base, struct timeval **tv_p)
 {
@@ -977,20 +1019,24 @@ timeout_next(struct event_base *base, struct timeval **tv_p)
 	struct event *ev;
 	struct timeval *tv = *tv_p;
 
+	// 如果最小堆为空
 	if ((ev = min_heap_top(&base->timeheap)) == NULL) {
 		/* if no time-based events are active wait for I/O */
 		*tv_p = NULL;
 		return (0);
 	}
 
+	// 获取当前时间
 	if (gettime(base, &now) == -1)
 		return (-1);
 
+	//如果当前时间大于定时的时间，说明已过时，tv清零返回  
 	if (evutil_timercmp(&ev->ev_timeout, &now, <=)) {
 		evutil_timerclear(tv);
 		return (0);
 	}
 
+	//定时时间减去当前时间获得tv要等待的时间
 	evutil_timersub(&ev->ev_timeout, &now, tv);
 
 	assert(tv->tv_sec >= 0);
@@ -1005,7 +1051,16 @@ timeout_next(struct event_base *base, struct timeval **tv_p)
  * time against the last time we checked.  Not needed when using clock
  * monotonic.
  */
-
+//
+// 时间校正
+// CLOCK_REALTIME:系统实时时间,随系统实时时间改变而改变,即从UTC1970-1-
+//                10:0:0开始计时,中间时刻如果系统时间被用户改成其他,则对
+//                应的时间相应改变
+// CLOCK_MONOTONIC:从系统启动这一刻起开始计时,不受系统时间被用户改变的影响
+// CLOCK_PROCESS_CPUTIME_ID:本进程到当前代码系统CPU花费的时间
+// CLOCK_THREAD_CPUTIME_ID:本线程到当前代码系统CPU花费的时间
+// 如果系统支持monotonic,就不需要校正，系统不支持monotonic,而用户可能会修
+// 改系统时间,将时间向前调，这时，就需要校正，由函数timeout_correct来完成
 static void
 timeout_correct(struct event_base *base, struct timeval *tv)
 {
@@ -1013,11 +1068,15 @@ timeout_correct(struct event_base *base, struct timeval *tv)
 	unsigned int size;
 	struct timeval off;
 
+	// 如果当前系统使用monotonic，则直接返回
 	if (use_monotonic)
 		return;
-
+	
 	/* Check if time is running backwards */
+	// 获取当前时间
 	gettime(base, tv);
+
+	//时间不够向前调，将base的event_tv设置为当前时间，返回 
 	if (evutil_timercmp(tv, &base->event_tv, >=)) {
 		base->event_tv = *tv;
 		return;
@@ -1025,19 +1084,25 @@ timeout_correct(struct event_base *base, struct timeval *tv)
 
 	event_debug(("%s: time is running backwards, corrected",
 		    __func__));
+
+	//计算时间差  
 	evutil_timersub(&base->event_tv, tv, &off);
 
 	/*
 	 * We can modify the key element of the node without destroying
 	 * the key, beause we apply it to all in the right order.
 	 */
+	// 获取指向时间堆的数组
 	pev = base->timeheap.p;
+	// 获取时间堆保存的元素个数
 	size = base->timeheap.n;
+	// 将时间堆中的时间减去上面计算出的时间差  
 	for (; size-- > 0; ++pev) {
 		struct timeval *ev_tv = &(**pev).ev_timeout;
 		evutil_timersub(ev_tv, &off, ev_tv);
 	}
 	/* Now remember what the new time turned out to be. */
+	// 保存时间
 	base->event_tv = *tv;
 }
 
@@ -1163,7 +1228,6 @@ event_queue_insert(struct event_base *base, struct event *ev, int queue)
 }
 
 /* Functions for debugging */
-
 const char *
 event_get_version(void)
 {
