@@ -178,6 +178,7 @@ epoll_recalc(struct event_base *base, void *arg, int max)
 	return (0);
 }
 
+
 static int
 epoll_dispatch(struct event_base *base, void *arg, struct timeval *tv)
 {

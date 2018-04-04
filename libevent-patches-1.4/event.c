@@ -554,7 +554,7 @@ event_base_loop(struct event_base *base, int flags)
 				}
 			}
 		}
-
+		
 		// 校正系统时间
 	    // 校正系统时间，如果系统使用的是非MONOTONIC时间，用户可能会向后调整了系统时间
 		// 在timeout_correct函数里，比较last wait time和当前时间，如果当前时间< 
@@ -612,12 +612,13 @@ event_base_loop(struct event_base *base, int flags)
 		} else if (flags & EVLOOP_NONBLOCK) // 循环不阻塞
 			done = 1;  // 设置标志
 	}
-
+	
 	/* clear time cache */
 	// 循环结束，清空时间缓存
 	base->tv_cache.tv_sec = 0;
-
+	
 	event_debug(("%s: asked to terminate loop.", __func__));
+	
 	return (0);
 }
 

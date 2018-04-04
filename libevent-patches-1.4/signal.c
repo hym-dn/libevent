@@ -216,17 +216,31 @@ _evsignal_set_handler(struct event_base *base,
 	return (0);
 }
 
+//
+// 注册signal事件是通过evsignal_add(struct event *ev)函数完成的。
+// 1 取得ev要注册到的信号signo；
+// 2 如果信号signo未被注册，那么就为signo注册信号处理函数evsignal_handler()；
+// 3 如果事件ev_signal还没哟注册，就注册ev_signal事件；
+// 4 将事件ev添加到signo的event链表中；
+//
 int
 evsignal_add(struct event *ev)
 {
 	int evsignal;
+	// 获取事件中的反应堆
 	struct event_base *base = ev->ev_base;
+	// 获取事件中的信号
 	struct evsignal_info *sig = &ev->ev_base->sig;
 
+	// 如果事件是读或写
 	if (ev->ev_events & (EV_READ|EV_WRITE))
-		event_errx(1, "%s: EV_SIGNAL incompatible use", __func__);
+		event_errx(1, "%s: EV_SIGNAL incompatible use", __func__); // 与信号事件不相容 
+
+	// 获取信号
 	evsignal = EVENT_SIGNAL(ev);
 	assert(evsignal >= 0 && evsignal < NSIG);
+
+	
 	if (TAILQ_EMPTY(&sig->evsigevents[evsignal])) {
 		event_debug(("%s: %p: changing signal handler", __func__, ev));
 		if (_evsignal_set_handler(
@@ -299,11 +313,15 @@ evsignal_del(struct event *ev)
 	return (_evsignal_restore_handler(ev->ev_base, EVENT_SIGNAL(ev)));
 }
 
+// 注册signal事件是通过evsignal_add(struct event *ev)函数完成的，
+// libevent对所有的信号注册同一个处理函数evsignal_handler()
 static void
 evsignal_handler(int sig)
 {
+	// 不覆盖原来的错误代码
 	int save_errno = errno;
-
+	
+	// 不存在反应堆
 	if (evsignal_base == NULL) {
 		event_warn(
 			"%s: received signal %d, but have no base configured",
@@ -311,15 +329,24 @@ evsignal_handler(int sig)
 		return;
 	}
 
+	// 记录信号sig的触发次数，并设置event触发标记
+	// 信号被捕获次数自加
 	evsignal_base->sig.evsigcaught[sig]++;
+	// 设置信号被捕获标记
 	evsignal_base->sig.evsignal_caught = 1;
 
+	// 绑定信号响应函数
+	// 重新注册信号
 #ifndef HAVE_SIGACTION
 	signal(sig, evsignal_handler);
 #endif
 
 	/* Wake up our notification mechanism */
+	// 向写socket写一个字节数据，触发event_base的I/O事件，
+	// 从而通知其有信号触发，需要处理
 	send(evsignal_base->sig.ev_signal_pair[0], "a", 1, 0);
+
+	// 恢复错误编号
 	errno = save_errno;
 }
 
