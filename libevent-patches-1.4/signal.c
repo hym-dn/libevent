@@ -150,6 +150,7 @@ evsignal_init(struct event_base *base)
 
 /* Helper: set the signal handler for evsignal to handler in base, so that
  * we can restore the original handler when we clear the current one. */
+// 设置信号响应函数
 int
 _evsignal_set_handler(struct event_base *base,
 		      int evsignal, void (*handler)(int))
@@ -159,6 +160,7 @@ _evsignal_set_handler(struct event_base *base,
 #else
 	ev_sighandler_t sh;
 #endif
+	// 获取信号结构体
 	struct evsignal_info *sig = &base->sig;
 	void *p;
 
@@ -166,24 +168,31 @@ _evsignal_set_handler(struct event_base *base,
 	 * resize saved signal handler array up to the highest signal number.
 	 * a dynamic array is used to keep footprint on the low side.
 	 */
+	// 信号已经溢出
 	if (evsignal >= sig->sh_old_max) {
+		// 计算新尺寸
 		int new_max = evsignal + 1;
+		// 输出信息
 		event_debug(("%s: evsignal (%d) >= sh_old_max (%d), resizing",
 			    __func__, evsignal, sig->sh_old_max));
+		// 重新分配信号结构体数组
 		p = realloc(sig->sh_old, new_max * sizeof(*sig->sh_old));
 		if (p == NULL) {
 			event_warn("realloc");
 			return (-1);
 		}
 
+		// 设置数组中新元素内容为0
 		memset((char *)p + sig->sh_old_max * sizeof(*sig->sh_old),
 		    0, (new_max - sig->sh_old_max) * sizeof(*sig->sh_old));
 
+		// 存储数组
 		sig->sh_old_max = new_max;
 		sig->sh_old = p;
 	}
 
 	/* allocate space for previous handler out of dynamic array */
+	// 创建一个新的信号结构体
 	sig->sh_old[evsignal] = malloc(sizeof *sig->sh_old[evsignal]);
 	if (sig->sh_old[evsignal] == NULL) {
 		event_warn("malloc");
@@ -191,6 +200,7 @@ _evsignal_set_handler(struct event_base *base,
 	}
 
 	/* save previous handler and setup new handler */
+	// 为信号绑定函数
 #ifdef HAVE_SIGACTION
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = handler;
@@ -239,17 +249,21 @@ evsignal_add(struct event *ev)
 	// 获取信号
 	evsignal = EVENT_SIGNAL(ev);
 	assert(evsignal >= 0 && evsignal < NSIG);
-
 	
+	// 如果信号对应的事件为空
 	if (TAILQ_EMPTY(&sig->evsigevents[evsignal])) {
+		// 输出信息
 		event_debug(("%s: %p: changing signal handler", __func__, ev));
+		// 设置信号响应函数
 		if (_evsignal_set_handler(
 			    base, evsignal, evsignal_handler) == -1)
 			return (-1);
 
 		/* catch signals if they happen quickly */
+		// 存储信号处理反应堆
 		evsignal_base = base;
 
+		// 如果信号中的事件尚未被注册，则注册
 		if (!sig->ev_signal_added) {
 			if (event_add(&sig->ev_signal, NULL))
 				return (-1);
@@ -258,8 +272,9 @@ evsignal_add(struct event *ev)
 	}
 
 	/* multiple events may listen to the same signal */
+	// 将事件插入到链表尾部
 	TAILQ_INSERT_TAIL(&sig->evsigevents[evsignal], ev, ev_signal_next);
-
+	
 	return (0);
 }
 
@@ -315,6 +330,7 @@ evsignal_del(struct event *ev)
 
 // 注册signal事件是通过evsignal_add(struct event *ev)函数完成的，
 // libevent对所有的信号注册同一个处理函数evsignal_handler()
+// 全部信号的响应函数
 static void
 evsignal_handler(int sig)
 {
