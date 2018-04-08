@@ -80,6 +80,9 @@ extern const struct eventop devpollops;
 extern const struct eventop win32ops;
 #endif
 
+// Libevent把所有支持的I/O demultiplex机制存储在
+// 一个全局静态数组eventops中，并在初始化时选择使用
+// 何种机制
 /* In order of preference */
 static const struct eventop *eventops[] = {
 #ifdef HAVE_EVENT_PORTS
@@ -215,14 +218,15 @@ event_base_new(void)
 	TAILQ_INIT(&base->eventqueue);
 	base->sig.ev_signal_pair[0] = -1;
 	base->sig.ev_signal_pair[1] = -1;
-	
+
+	// 然后libevent根据系统配置和编译选项决定使用哪一种
+	// I/O demultiplex机制
 	base->evbase = NULL;
-	for (i = 0; eventops[i] && !base->evbase; i++) {
-		base->evsel = eventops[i];
-
-		base->evbase = base->evsel->init(base);
+	for (i = 0; eventops[i] && !base->evbase; i++) { // I/O 多路复机制存在
+		base->evsel = eventops[i]; // 设置I/O多路复用机制
+		base->evbase = base->evsel->init(base); // 初始化I/O多路复用机制
 	}
-
+	
 	if (base->evbase == NULL)
 		event_errx(1, "%s: no event mechanism available", __func__);
 
@@ -554,7 +558,7 @@ event_base_loop(struct event_base *base, int flags)
 				}
 			}
 		}
-		
+				
 		// 校正系统时间
 	    // 校正系统时间，如果系统使用的是非MONOTONIC时间，用户可能会向后调整了系统时间
 		// 在timeout_correct函数里，比较last wait time和当前时间，如果当前时间< 
@@ -562,7 +566,7 @@ event_base_loop(struct event_base *base, int flags)
 		// 时时间。
 		// 纠正时间系统
 		timeout_correct(base, &tv);
-
+		
 		// 根据timer heap中事件的最小超时时间，计算系统I/O demultiplexer的最大等待时间
 		tv_p = &tv;
 		if (!base->event_count_active && !(flags & EVLOOP_NONBLOCK)) { // 不存在激活事件，并且并未阻塞循环
@@ -576,18 +580,18 @@ event_base_loop(struct event_base *base, int flags)
 			 // 下面会提到，在libevent中，低优先级的就绪事件可能不能立即被处理
 			evutil_timerclear(&tv);
 		}
-		
+
 		/* If we have no events, we just exit */
 		// 如果当前没有注册事件，就退出
 		if (!event_haveevents(base)) {
 			event_debug(("%s: no events registered.", __func__));
 			return (1);
 		}
-
+		
 		/* update last old time */
 		// 获取当前时间，并存储到event_tv中
 		gettime(base, &base->event_tv);
-
+		
 		/* clear time cache */
 		// 清空缓存时间
 		base->tv_cache.tv_sec = 0;
@@ -596,7 +600,7 @@ event_base_loop(struct event_base *base, int flags)
 		res = evsel->dispatch(base, evbase, tv_p);
 		if (res == -1)
 			return (-1);
-
+			
 		// 将time cache赋值为当前系统时间
 		gettime(base, &base->tv_cache);
 		// 检查heap中的timer events，将就绪的timer event从heap上删除，并插入到激活链表中

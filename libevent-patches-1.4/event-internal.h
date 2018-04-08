@@ -93,7 +93,7 @@ struct event_base {
 	/* active event management */
 	struct event_list **activequeues; // 二级指针，指向优先级为priority的链表
 	int nactivequeues; // 优先级二级链表的元素数量
-
+	
 	// sig是由来管理信号的结构体，将在后面信号处理时专门讲解；
 	/* signal handling info */
 	struct evsignal_info sig;

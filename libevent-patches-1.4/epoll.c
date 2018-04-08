@@ -75,6 +75,9 @@ static int epoll_del	(void *, struct event *);
 static int epoll_dispatch	(struct event_base *, void *, struct timeval *);
 static void epoll_dealloc	(struct event_base *, void *);
 
+// 可以看出，libevent在编译阶段选择系统的I/O demultiplex机制，
+// 而不支持在运行阶段根据配置再次选择。以Linux下面的epoll为例，
+// 实现在源文件epoll.c中，eventops对象epollops定义如下：
 const struct eventop epollops = {
 	"epoll",
 	epoll_init,

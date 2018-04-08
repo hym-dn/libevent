@@ -181,11 +181,11 @@ _evsignal_set_handler(struct event_base *base,
 			event_warn("realloc");
 			return (-1);
 		}
-
+		
 		// 设置数组中新元素内容为0
 		memset((char *)p + sig->sh_old_max * sizeof(*sig->sh_old),
 		    0, (new_max - sig->sh_old_max) * sizeof(*sig->sh_old));
-
+		
 		// 存储数组
 		sig->sh_old_max = new_max;
 		sig->sh_old = p;
